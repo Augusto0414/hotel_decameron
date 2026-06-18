@@ -33,13 +33,15 @@ class HotelHabitacion extends Controller
                 ->get();
 
             return response()->json([
-                'message' => 'Habitaciones obtenidas exitosamente',
-                'success' => true,
-                'hotel' => $hotel,
-                'habitaciones' => $habitaciones,
-                'total_configuradas' => $habitaciones->sum('cantidad'),
-                'capacidad_disponible' => $hotel->numero_habitaciones - $habitaciones->sum('cantidad'),
-            ], 200);
+    'message' => 'Habitaciones obtenidas exitosamente',
+    'success' => true,
+    'hotel' => $hotel,
+    'data' => [
+        'data' => $habitaciones,
+        'total_configuradas' => $habitaciones->sum('cantidad'),
+        'capacidad_disponible' => $hotel->numero_habitaciones - $habitaciones->sum('cantidad'),
+    ],
+], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al obtener habitaciones',
@@ -61,9 +63,17 @@ class HotelHabitacion extends Controller
                 ], 404);
             }
 
+            // Accept both snake_case and camelCase field names from the request
+            $request->merge([
+                'tipo_habitacion_id' => $request->input('tipo_habitacion_id') ?? $request->input('tipoHabitacionId'),
+                'acomodacion_id' => $request->input('acomodacion_id') ?? $request->input('acomodacionId'),
+                // 'cantidad' is already expected in snake_case; include camelCase for completeness
+                'cantidad' => $request->input('cantidad') ?? $request->input('cantidadHabitacion') ?? $request->input('cantidadHabitaciones'),
+            ]);
+
             $validation = $request->validate([
-                'tipo_habitacion_id' => 'required|exists:tipos_habitacion,id',
-                'acomodacion_id' => 'required|exists:acomodaciones,id',
+                'tipo_habitacion_id' => 'required|integer|min:1',
+                'acomodacion_id' => 'required|integer|min:1',
                 'cantidad' => 'required|integer|min:1',
             ]);
 
@@ -93,11 +103,25 @@ class HotelHabitacion extends Controller
                 ->first();
 
             if ($existe) {
-                return response()->json([
-                    'message' => 'Esta combinación ya existe para este hotel',
-                    'success' => false
-                ], 422);
-            }
+                    // Update existing combination by adding the new quantity
+                    $newCantidad = $existe->cantidad + $validation['cantidad'];
+                    $totalActual = $hotel->habitaciones()->sum('cantidad');
+                    $nuevoTotal = $totalActual - $existe->cantidad + $newCantidad;
+                    if ($nuevoTotal > $hotel->numero_habitaciones) {
+                        return response()->json([
+                            'message' => "Supera la capacidad. Disponible: " . ($hotel->numero_habitaciones - $totalActual),
+                            'success' => false
+                        ], 422);
+                    }
+                    $existe->update(['cantidad' => $newCantidad]);
+                    return response()->json([
+                        'message' => 'Habitaciones actualizadas exitosamente',
+                        'success' => true,
+                        'data' => $existe->load('tipoHabitacion', 'acomodacion'),
+                        'total_configuradas' => $nuevoTotal,
+                        'capacidad_disponible' => $hotel->numero_habitaciones - $nuevoTotal,
+                    ], 200);
+                }
 
             $totalActual = $hotel->habitaciones()->sum('cantidad');
             $nuevoTotal = $totalActual + $validation['cantidad'];
